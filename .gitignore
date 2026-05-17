@@ -1,0 +1,35 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+.venv/
+venv/
+env/
+
+# Build/cache folders
+build/
+dist/
+.cache/
+.pytest_cache/
+
+# Logs and generated recordings
+*.log
+logs/
+recordings/
+captures/
+*.csv
+*.bag
+*.db3
+
+# Archives and large generated artifacts
+*.zip
+*.tar.gz
+*.onnx
+*.trt
+*.engine
+
+# OS files
+.DS_Store
+Thumbs.db
