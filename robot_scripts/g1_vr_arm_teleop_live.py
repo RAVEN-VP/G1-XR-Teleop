@@ -184,7 +184,7 @@ def main():
             time.sleep(0.01)
 
     print("Captured VR neutral positions.")
-    input("Press Enter to ENABLE LIVE ARM TELEOP for 30 seconds. Keep e-stop ready...")
+    input("Press Enter to ENABLE LIVE ARM TELEOP for 30 seconds. Hold Quest inside trigger deadman to move. Keep e-stop ready...")
 
     crc = CRC()
     low_cmd = unitree_hg_msg_dds__LowCmd_()
@@ -212,8 +212,14 @@ def main():
                 left_delta = left - neutral_left
                 right_delta = right - neutral_right
 
-                target_q = compute_targets(start_q, left_delta, right_delta)
-                cmd_q = rate_limit(cmd_q, target_q)
+                deadman = bool(msg.get("deadman", False))
+
+                if deadman:
+                    target_q = compute_targets(start_q, left_delta, right_delta)
+                    cmd_q = rate_limit(cmd_q, target_q)
+                else:
+                    # Deadman released: hold the last safe commanded pose.
+                    target_q = dict(cmd_q)
 
                 last_packet_time = time.time()
 
@@ -232,7 +238,8 @@ def main():
                     f"L_sh_pitch={cmd_q[G1JointIndex.LeftShoulderPitch]:.3f} "
                     f"R_sh_pitch={cmd_q[G1JointIndex.RightShoulderPitch]:.3f} "
                     f"L_sh_roll={cmd_q[G1JointIndex.LeftShoulderRoll]:.3f} "
-                    f"R_sh_roll={cmd_q[G1JointIndex.RightShoulderRoll]:.3f}"
+                    f"R_sh_roll={cmd_q[G1JointIndex.RightShoulderRoll]:.3f} "
+                    f"deadman={deadman}"
                 )
                 last_print = now
 
