@@ -15,7 +15,7 @@ sys.path.insert(0, str(REPO_ROOT))
 from common.teleop_logger import TeleopLogger, flatten_vec
 
 
-XML_PATH = "./unitree_robots/g1/g1_29dof_vrtest.xml"
+XML_PATH = "mujoco_xml/g1_29dof_vrtest.xml"
 UDP_PORT = 5005
 
 
@@ -559,6 +559,9 @@ with mujoco.viewer.launch_passive(model, data) as viewer:
         add_joint_values(row, "actual_left", LEFT_ARM_JOINTS, left_qpos_ids, data)
         add_joint_values(row, "cmd_right", RIGHT_ARM_JOINTS, right_qpos_ids, data)
         add_joint_values(row, "actual_right", RIGHT_ARM_JOINTS, right_qpos_ids, data)
+
+        # Record manipulation object pose and velocity for training data.
+        add_object_state(row, model, data, object_body_ids)
 
         logger.write_row(row)
 
