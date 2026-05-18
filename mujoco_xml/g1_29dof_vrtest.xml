@@ -310,6 +310,21 @@
                           <geom pos="0.0415 0.003 0" quat="1 0 0 0" type="mesh" contype="0"
                             conaffinity="0" group="1" density="0" rgba="0.7 0.7 0.7 1"
                             mesh="left_rubber_hand" />
+
+                          <!-- Simplified collision proxy for VR teleop object interaction -->
+                          <geom name="left_hand_contact_capsule"
+                            type="capsule"
+                            fromto="0.035 0.003 0 0.145 0.003 0"
+                            size="0.035"
+                            rgba="0.1 1.0 0.1 0.25"
+                            friction="1.6 0.05 0.05" />
+
+                          <geom name="left_hand_contact_palm"
+                            type="box"
+                            pos="0.095 0.003 0"
+                            size="0.045 0.04 0.025"
+                            rgba="0.1 1.0 0.1 0.18"
+                            friction="1.6 0.05 0.05" />
                         </body>
                       </body>
                     </body>
@@ -386,6 +401,21 @@
                           <geom pos="0.0415 -0.003 0" quat="1 0 0 0" type="mesh" contype="0"
                             conaffinity="0" group="1" density="0" rgba="0.7 0.7 0.7 1"
                             mesh="right_rubber_hand" />
+
+                          <!-- Simplified collision proxy for VR teleop object interaction -->
+                          <geom name="right_hand_contact_capsule"
+                            type="capsule"
+                            fromto="0.035 -0.003 0 0.145 -0.003 0"
+                            size="0.035"
+                            rgba="0.1 0.1 1.0 0.25"
+                            friction="1.6 0.05 0.05" />
+
+                          <geom name="right_hand_contact_palm"
+                            type="box"
+                            pos="0.095 -0.003 0"
+                            size="0.045 0.04 0.025"
+                            rgba="0.1 0.1 1.0 0.18"
+                            friction="1.6 0.05 0.05" />
                         </body>
                       </body>
                     </body>
@@ -398,8 +428,38 @@
       </body>
     </body>
 
+
+    <!-- Table/platform for VR object manipulation -->
+    <body name="teleop_table" pos="0.55 0.00 0.68">
+      <geom name="teleop_table_top"
+            type="box"
+            size="0.45 0.35 0.035"
+            rgba="0.45 0.32 0.22 1"
+            friction="1.4 0.05 0.05"/>
+      <geom name="teleop_table_front_left_leg"
+            type="box"
+            pos="-0.35 0.25 -0.34"
+            size="0.025 0.025 0.34"
+            rgba="0.35 0.24 0.15 1"/>
+      <geom name="teleop_table_front_right_leg"
+            type="box"
+            pos="-0.35 -0.25 -0.34"
+            size="0.025 0.025 0.34"
+            rgba="0.35 0.24 0.15 1"/>
+      <geom name="teleop_table_back_left_leg"
+            type="box"
+            pos="0.35 0.25 -0.34"
+            size="0.025 0.025 0.34"
+            rgba="0.35 0.24 0.15 1"/>
+      <geom name="teleop_table_back_right_leg"
+            type="box"
+            pos="0.35 -0.25 -0.34"
+            size="0.025 0.025 0.34"
+            rgba="0.35 0.24 0.15 1"/>
+    </body>
+
     <!-- VR teleoperation manipulation objects -->
-    <body name="teleop_cube" pos="0.55 0.00 0.08">
+    <body name="teleop_cube" pos="0.55 0.00 0.755">
       <freejoint name="teleop_cube_freejoint"/>
       <geom name="teleop_cube_geom"
             type="box"
@@ -409,7 +469,7 @@
             friction="1.2 0.05 0.05"/>
     </body>
 
-    <body name="teleop_cylinder" pos="0.45 0.18 0.10">
+    <body name="teleop_cylinder" pos="0.45 0.18 0.795">
       <freejoint name="teleop_cylinder_freejoint"/>
       <geom name="teleop_cylinder_geom"
             type="cylinder"
@@ -419,7 +479,7 @@
             friction="1.2 0.05 0.05"/>
     </body>
 
-    <body name="teleop_handle" pos="0.50 -0.18 0.18">
+    <body name="teleop_handle" pos="0.50 -0.18 0.755">
       <freejoint name="teleop_handle_freejoint"/>
       <geom name="teleop_handle_bar_geom"
             type="capsule"
