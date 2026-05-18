@@ -1,7 +1,16 @@
 import json
 import socket
+import sys
 import time
+from pathlib import Path
+
 import numpy as np
+
+# Allow this script to import ../common when run from the repo.
+REPO_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(REPO_ROOT))
+
+from common.teleop_logger import TeleopLogger, flatten_vec, flatten_joint_values, make_joint_fields
 
 from unitree_sdk2py.core.channel import ChannelFactoryInitialize, ChannelPublisher, ChannelSubscriber
 from unitree_sdk2py.idl.default import unitree_hg_msg_dds__LowCmd_
@@ -141,6 +150,51 @@ def release_arm_sdk(publisher, crc, low_cmd):
         time.sleep(0.02)
 
 
+def make_logger():
+    fieldnames = [
+        "timestamp",
+        "elapsed",
+        "deadman",
+        "udp_timeout",
+        "left_x", "left_y", "left_z",
+        "right_x", "right_y", "right_z",
+        "left_delta_x", "left_delta_y", "left_delta_z",
+        "right_delta_x", "right_delta_y", "right_delta_z",
+    ]
+
+    fieldnames += make_joint_fields("cmd", CONTROL_JOINTS)
+    fieldnames += make_joint_fields("actual", CONTROL_JOINTS)
+
+    metadata = {
+        "script": "g1_vr_arm_teleop_live.py",
+        "pipeline": "Quest controllers -> Windows UDP sender -> G1 robot Python bridge -> Unitree arm_sdk",
+        "udp_port": 5005,
+        "control_joints": CONTROL_JOINTS,
+        "joint_limits": {str(k): list(v) for k, v in JOINT_LIMITS.items()},
+        "rate_limit_rad_per_frame": 0.018,
+        "control_dt_seconds": 0.02,
+        "deadman": "Quest inside trigger; robot only updates targets while deadman is true",
+    }
+
+    return TeleopLogger(
+        root_dir=str(REPO_ROOT / "logs"),
+        metadata=metadata,
+        fieldnames=fieldnames,
+    )
+
+
+def read_actual_q():
+    actual_q = {}
+
+    if last_state is None:
+        return actual_q
+
+    for joint in CONTROL_JOINTS:
+        actual_q[joint] = last_state.motor_state[joint].q
+
+    return actual_q
+
+
 def main():
     print("Initialising DDS on robot default interface...")
     ChannelFactoryInitialize(0)
@@ -189,12 +243,23 @@ def main():
     crc = CRC()
     low_cmd = unitree_hg_msg_dds__LowCmd_()
 
+    logger = make_logger()
+    print(f"Logging session to: {logger.session_dir}")
+
     start_time = time.time()
     last_packet_time = time.time()
     last_print = 0.0
 
+    left = np.array(neutral_left, dtype=float)
+    right = np.array(neutral_right, dtype=float)
+    left_delta = np.zeros(3)
+    right_delta = np.zeros(3)
+    deadman = False
+
     try:
         while time.time() - start_time < 30.0:
+            udp_timeout = False
+
             while True:
                 try:
                     packet, _ = sock.recvfrom(4096)
@@ -225,12 +290,31 @@ def main():
 
             # Packet timeout safety: keep holding the last safe command.
             if time.time() - last_packet_time > 0.25:
+                udp_timeout = True
                 print("UDP timeout. Holding last safe command.")
                 last_packet_time = time.time()
 
             write_command(publisher, crc, low_cmd, cmd_q)
 
             now = time.time()
+            elapsed = now - start_time
+
+            row = {
+                "timestamp": now,
+                "elapsed": elapsed,
+                "deadman": int(deadman),
+                "udp_timeout": int(udp_timeout),
+            }
+
+            row.update(flatten_vec("left", left))
+            row.update(flatten_vec("right", right))
+            row.update(flatten_vec("left_delta", left_delta))
+            row.update(flatten_vec("right_delta", right_delta))
+            row.update(flatten_joint_values("cmd", CONTROL_JOINTS, cmd_q))
+            row.update(flatten_joint_values("actual", CONTROL_JOINTS, read_actual_q()))
+
+            logger.write_row(row)
+
             if now - last_print > 0.5:
                 print(
                     f"L_elbow={cmd_q[G1JointIndex.LeftElbow]:.3f} "
@@ -246,6 +330,7 @@ def main():
             time.sleep(0.02)
 
     finally:
+        logger.close()
         release_arm_sdk(publisher, crc, low_cmd)
         print("Done.")
 
