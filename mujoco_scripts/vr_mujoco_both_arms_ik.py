@@ -1,10 +1,18 @@
 import json
 import socket
+import sys
 import time
+from pathlib import Path
 
 import mujoco
 import mujoco.viewer
 import numpy as np
+
+# Allow this script to import ../common when run from the repo.
+REPO_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(REPO_ROOT))
+
+from common.teleop_logger import TeleopLogger, flatten_vec
 
 
 XML_PATH = "./unitree_robots/g1/g1_29dof_vrtest.xml"
@@ -236,6 +244,69 @@ def solve_arm_ik(
     return elbow_target
 
 
+def make_logger():
+    joint_fields = []
+
+    for name in LEFT_ARM_JOINTS:
+        joint_fields.append(f"cmd_left_{name}")
+        joint_fields.append(f"actual_left_{name}")
+
+    for name in RIGHT_ARM_JOINTS:
+        joint_fields.append(f"cmd_right_{name}")
+        joint_fields.append(f"actual_right_{name}")
+
+    fieldnames = [
+        "timestamp",
+        "elapsed",
+        "packet_count",
+        "deadman",
+        "left_x", "left_y", "left_z",
+        "right_x", "right_y", "right_z",
+        "head_x", "head_y", "head_z",
+        "left_raw_x", "left_raw_y", "left_raw_z",
+        "right_raw_x", "right_raw_y", "right_raw_z",
+        "left_target_x", "left_target_y", "left_target_z",
+        "right_target_x", "right_target_y", "right_target_z",
+        "left_wrist_x", "left_wrist_y", "left_wrist_z",
+        "right_wrist_x", "right_wrist_y", "right_wrist_z",
+        "left_elbow_target_x", "left_elbow_target_y", "left_elbow_target_z",
+        "right_elbow_target_x", "right_elbow_target_y", "right_elbow_target_z",
+        "left_error",
+        "right_error",
+    ]
+
+    fieldnames += joint_fields
+
+    metadata = {
+        "script": "vr_mujoco_both_arms_ik.py",
+        "pipeline": "Quest controllers -> Windows UDP sender -> MuJoCo G1 elbow-guided IK",
+        "xml_path": XML_PATH,
+        "udp_port": UDP_PORT,
+        "left_arm_joints": LEFT_ARM_JOINTS,
+        "right_arm_joints": RIGHT_ARM_JOINTS,
+        "target_smoothing": TARGET_SMOOTHING,
+        "ik_max_iterations": IK_MAX_ITERATIONS,
+        "ik_damping": IK_DAMPING,
+        "ik_step_scale": IK_STEP_SCALE,
+        "elbow_weight": ELBOW_WEIGHT,
+        "right_target_min": RIGHT_TARGET_MIN.tolist(),
+        "right_target_max": RIGHT_TARGET_MAX.tolist(),
+        "left_target_min": LEFT_TARGET_MIN.tolist(),
+        "left_target_max": LEFT_TARGET_MAX.tolist(),
+    }
+
+    return TeleopLogger(
+        root_dir=str(REPO_ROOT / "logs"),
+        metadata=metadata,
+        fieldnames=fieldnames,
+    )
+
+
+def add_joint_values(row, prefix, joint_names, qpos_ids, data):
+    for name, qid in zip(joint_names, qpos_ids):
+        row[f"{prefix}_{name}"] = float(data.qpos[qid])
+
+
 model = mujoco.MjModel.from_xml_path(XML_PATH)
 data = mujoco.MjData(model)
 
@@ -290,6 +361,11 @@ print("Press Ctrl+C to stop.")
 
 last_print = 0.0
 packet_count = 0
+deadman = False
+
+logger = make_logger()
+print(f"Logging MuJoCo session to: {logger.session_dir}")
+session_start_time = time.time()
 
 with mujoco.viewer.launch_passive(model, data) as viewer:
     while viewer.is_running():
@@ -310,6 +386,8 @@ with mujoco.viewer.launch_passive(model, data) as viewer:
 
             if "head" in msg:
                 head_pos = np.array(msg["head"], dtype=float)
+
+            deadman = bool(msg.get("deadman", False))
 
         # Clamp and smooth targets.
         left_clamped = clamp_target(left_pos_raw, "left")
@@ -358,21 +436,54 @@ with mujoco.viewer.launch_passive(model, data) as viewer:
         )
 
         now = time.time()
+        elapsed = now - session_start_time
+
+        left_wrist_pos = data.xpos[left_wrist_body_id].copy()
+        right_wrist_pos = data.xpos[right_wrist_body_id].copy()
+
+        left_err = float(np.linalg.norm(left_pos_smooth - left_wrist_pos))
+        right_err = float(np.linalg.norm(right_pos_smooth - right_wrist_pos))
+
+        row = {
+            "timestamp": now,
+            "elapsed": elapsed,
+            "packet_count": packet_count,
+            "deadman": int(deadman),
+            "left_error": left_err,
+            "right_error": right_err,
+        }
+
+        row.update(flatten_vec("left", left_pos_smooth))
+        row.update(flatten_vec("right", right_pos_smooth))
+        row.update(flatten_vec("head", head_pos))
+        row.update(flatten_vec("left_raw", left_pos_raw))
+        row.update(flatten_vec("right_raw", right_pos_raw))
+        row.update(flatten_vec("left_target", left_pos_smooth))
+        row.update(flatten_vec("right_target", right_pos_smooth))
+        row.update(flatten_vec("left_wrist", left_wrist_pos))
+        row.update(flatten_vec("right_wrist", right_wrist_pos))
+        row.update(flatten_vec("left_elbow_target", left_elbow_target))
+        row.update(flatten_vec("right_elbow_target", right_elbow_target))
+
+        add_joint_values(row, "cmd_left", LEFT_ARM_JOINTS, left_qpos_ids, data)
+        add_joint_values(row, "actual_left", LEFT_ARM_JOINTS, left_qpos_ids, data)
+        add_joint_values(row, "cmd_right", RIGHT_ARM_JOINTS, right_qpos_ids, data)
+        add_joint_values(row, "actual_right", RIGHT_ARM_JOINTS, right_qpos_ids, data)
+
+        logger.write_row(row)
+
         if now - last_print > 1.0:
-            left_wrist_pos = data.xpos[left_wrist_body_id].copy()
-            right_wrist_pos = data.xpos[right_wrist_body_id].copy()
-
-            left_err = np.linalg.norm(left_pos_smooth - left_wrist_pos)
-            right_err = np.linalg.norm(right_pos_smooth - right_wrist_pos)
-
             print(
                 f"Packets: {packet_count} | "
                 f"L_err={left_err:.3f} | "
                 f"R_err={right_err:.3f} | "
                 f"L_target={np.round(left_pos_smooth, 3)} | "
-                f"R_target={np.round(right_pos_smooth, 3)}"
+                f"R_target={np.round(right_pos_smooth, 3)} | "
+                f"deadman={deadman}"
             )
 
             last_print = now
 
         viewer.sync()
+
+logger.close()
