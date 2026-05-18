@@ -45,6 +45,12 @@ RIGHT_ELBOW_BODY = "right_elbow_link"
 LEFT_WRIST_BODY = "left_wrist_yaw_link"
 LEFT_ELBOW_BODY = "left_elbow_link"
 
+TELEOP_OBJECTS = [
+    "teleop_cube",
+    "teleop_cylinder",
+    "teleop_handle",
+]
+
 
 # Right arm natural-ish rest pose.
 RIGHT_ARM_REST_POSE = np.array([
@@ -244,6 +250,86 @@ def solve_arm_ik(
     return elbow_target
 
 
+def get_object_body_ids(model, object_names):
+    body_ids = {}
+
+    for name in object_names:
+        body_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, name)
+        if body_id < 0:
+            raise RuntimeError(f"Could not find teleop object body: {name}")
+
+        body_ids[name] = body_id
+        print(f"Teleop object {name}: body_id={body_id}")
+
+    return body_ids
+
+
+def add_object_fields(fieldnames, object_names):
+    for name in object_names:
+        fieldnames.extend([
+            f"object_{name}_pos_x",
+            f"object_{name}_pos_y",
+            f"object_{name}_pos_z",
+            f"object_{name}_quat_w",
+            f"object_{name}_quat_x",
+            f"object_{name}_quat_y",
+            f"object_{name}_quat_z",
+            f"object_{name}_linvel_x",
+            f"object_{name}_linvel_y",
+            f"object_{name}_linvel_z",
+            f"object_{name}_angvel_x",
+            f"object_{name}_angvel_y",
+            f"object_{name}_angvel_z",
+        ])
+
+
+def add_object_state(row, model, data, object_body_ids):
+    for name, body_id in object_body_ids.items():
+        xpos = data.xpos[body_id].copy()
+        xquat = data.xquat[body_id].copy()
+
+        linear_vel = np.zeros(3)
+        angular_vel = np.zeros(3)
+        mujoco.mj_objectVelocity(
+            model,
+            data,
+            mujoco.mjtObj.mjOBJ_BODY,
+            body_id,
+            np.concatenate([angular_vel, linear_vel]),
+            0,
+        )
+
+        velocity = np.zeros(6)
+        mujoco.mj_objectVelocity(
+            model,
+            data,
+            mujoco.mjtObj.mjOBJ_BODY,
+            body_id,
+            velocity,
+            0,
+        )
+
+        angular_vel = velocity[0:3]
+        linear_vel = velocity[3:6]
+
+        row[f"object_{name}_pos_x"] = float(xpos[0])
+        row[f"object_{name}_pos_y"] = float(xpos[1])
+        row[f"object_{name}_pos_z"] = float(xpos[2])
+
+        row[f"object_{name}_quat_w"] = float(xquat[0])
+        row[f"object_{name}_quat_x"] = float(xquat[1])
+        row[f"object_{name}_quat_y"] = float(xquat[2])
+        row[f"object_{name}_quat_z"] = float(xquat[3])
+
+        row[f"object_{name}_linvel_x"] = float(linear_vel[0])
+        row[f"object_{name}_linvel_y"] = float(linear_vel[1])
+        row[f"object_{name}_linvel_z"] = float(linear_vel[2])
+
+        row[f"object_{name}_angvel_x"] = float(angular_vel[0])
+        row[f"object_{name}_angvel_y"] = float(angular_vel[1])
+        row[f"object_{name}_angvel_z"] = float(angular_vel[2])
+
+
 def make_logger():
     joint_fields = []
 
@@ -276,6 +362,7 @@ def make_logger():
     ]
 
     fieldnames += joint_fields
+    add_object_fields(fieldnames, TELEOP_OBJECTS)
 
     metadata = {
         "script": "vr_mujoco_both_arms_ik.py",
@@ -293,6 +380,7 @@ def make_logger():
         "right_target_max": RIGHT_TARGET_MAX.tolist(),
         "left_target_min": LEFT_TARGET_MIN.tolist(),
         "left_target_max": LEFT_TARGET_MAX.tolist(),
+        "teleop_objects": TELEOP_OBJECTS,
     }
 
     return TeleopLogger(
@@ -313,6 +401,8 @@ data = mujoco.MjData(model)
 right_target_id = get_mocap_id(model, "vr_right_target")
 left_target_id = get_mocap_id(model, "vr_left_target")
 head_target_id = get_mocap_id(model, "vr_head_target")
+
+object_body_ids = get_object_body_ids(model, TELEOP_OBJECTS)
 
 right_wrist_body_id = get_body_id(model, RIGHT_WRIST_BODY)
 right_elbow_body_id = get_body_id(model, RIGHT_ELBOW_BODY)
