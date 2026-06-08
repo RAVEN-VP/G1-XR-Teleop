@@ -128,18 +128,37 @@ def button_pressed(vr, device_index, button_name):
     return (state.ulButtonPressed & mask) != 0
 
 
+def get_trigger_value(vr, device_index):
+    state = get_controller_state(vr, device_index)
+    if state is None:
+        return 0.0
+
+    # OpenVR commonly exposes the inside index trigger as an analog axis.
+    # Different runtimes may use different axis slots, so check all available axes.
+    best_value = 0.0
+
+    for axis in getattr(state, "rAxis", []):
+        try:
+            best_value = max(best_value, float(axis.x))
+        except Exception:
+            pass
+
+    # Also check the digital trigger button fallback.
+    if button_pressed(vr, device_index, "k_EButton_SteamVR_Trigger"):
+        best_value = max(best_value, 1.0)
+
+    return best_value
+
+
 def get_deadman_state(vr, poses):
     # Deadman switch uses the inside index trigger on either Meta Quest controller.
-    # It intentionally does not use the side grip button.
-    button_name = "k_EButton_SteamVR_Trigger"
+    # Side grip is intentionally not used.
+    left_trigger = get_trigger_value(vr, poses.get("left_index"))
+    right_trigger = get_trigger_value(vr, poses.get("right_index"))
 
-    for index_name in ("left_index", "right_index"):
-        device_index = poses.get(index_name)
+    deadman = left_trigger > 0.25 or right_trigger > 0.25
 
-        if button_pressed(vr, device_index, button_name):
-            return True
-
-    return False
+    return deadman, left_trigger, right_trigger
 
 
 def wait_for_valid_tracking(vr):
@@ -213,13 +232,15 @@ def main():
                 mapped = steamvr_delta_to_mujoco_delta(delta)
                 right_pos = add(MUJOCO_RIGHT_NEUTRAL, scale(mapped, POSITION_SCALE))
 
-            deadman = get_deadman_state(vr, poses)
+            deadman, left_trigger, right_trigger = get_deadman_state(vr, poses)
 
             packet = {
                 "left": left_pos,
                 "right": right_pos,
                 "head": head_pos,
                 "deadman": deadman,
+                "left_trigger": left_trigger,
+                "right_trigger": right_trigger,
             }
 
             data = json.dumps(packet).encode("utf-8")
@@ -232,6 +253,7 @@ def main():
                 print("  left    :", [round(v, 3) for v in left_pos])
                 print("  right   :", [round(v, 3) for v in right_pos])
                 print("  deadman :", deadman)
+                print("  triggers:", round(left_trigger, 3), round(right_trigger, 3))
                 last_print_time = now
 
             time.sleep(0.016)

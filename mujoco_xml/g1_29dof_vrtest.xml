@@ -314,17 +314,19 @@
                           <!-- Simplified collision proxy for VR teleop object interaction -->
                           <geom name="left_hand_contact_capsule"
                             type="capsule"
-                            fromto="0.035 0.003 0 0.145 0.003 0"
-                            size="0.035"
-                            rgba="0.1 1.0 0.1 0.25"
-                            friction="1.6 0.05 0.05" />
+                            fromto="0.025 0.003 0 0.180 0.003 0"
+                            size="0.055"
+                            contype="1" conaffinity="1"
+                            rgba="0.1 1.0 0.1 0.35"
+                            friction="2.0 0.1 0.1" />
 
                           <geom name="left_hand_contact_palm"
                             type="box"
-                            pos="0.095 0.003 0"
-                            size="0.045 0.04 0.025"
-                            rgba="0.1 1.0 0.1 0.18"
-                            friction="1.6 0.05 0.05" />
+                            pos="0.110 0.003 0"
+                            size="0.065 0.055 0.040"
+                            contype="1" conaffinity="1"
+                            rgba="0.1 1.0 0.1 0.25"
+                            friction="2.0 0.1 0.1" />
                         </body>
                       </body>
                     </body>
@@ -405,17 +407,19 @@
                           <!-- Simplified collision proxy for VR teleop object interaction -->
                           <geom name="right_hand_contact_capsule"
                             type="capsule"
-                            fromto="0.035 -0.003 0 0.145 -0.003 0"
-                            size="0.035"
-                            rgba="0.1 0.1 1.0 0.25"
-                            friction="1.6 0.05 0.05" />
+                            fromto="0.025 -0.003 0 0.180 -0.003 0"
+                            size="0.055"
+                            contype="1" conaffinity="1"
+                            rgba="0.1 0.1 1.0 0.35"
+                            friction="2.0 0.1 0.1" />
 
                           <geom name="right_hand_contact_palm"
                             type="box"
-                            pos="0.095 -0.003 0"
-                            size="0.045 0.04 0.025"
-                            rgba="0.1 0.1 1.0 0.18"
-                            friction="1.6 0.05 0.05" />
+                            pos="0.110 -0.003 0"
+                            size="0.065 0.055 0.040"
+                            contype="1" conaffinity="1"
+                            rgba="0.1 0.1 1.0 0.25"
+                            friction="2.0 0.1 0.1" />
                         </body>
                       </body>
                     </body>
@@ -430,12 +434,12 @@
 
 
     <!-- Table/platform for VR object manipulation -->
-    <body name="teleop_table" pos="0.55 0.00 0.68">
+    <body name="teleop_table" pos="0.36 0.00 0.68">
       <geom name="teleop_table_top"
             type="box"
             size="0.45 0.35 0.035"
             rgba="0.45 0.32 0.22 1"
-            friction="1.4 0.05 0.05"/>
+            contype="1" conaffinity="1" friction="1.8 0.08 0.08"/>
       <geom name="teleop_table_front_left_leg"
             type="box"
             pos="-0.35 0.25 -0.34"
@@ -459,27 +463,27 @@
     </body>
 
     <!-- VR teleoperation manipulation objects -->
-    <body name="teleop_cube" pos="0.55 0.00 0.755">
+    <body name="teleop_cube" pos="0.34 0.00 0.755">
       <freejoint name="teleop_cube_freejoint"/>
       <geom name="teleop_cube_geom"
             type="box"
             size="0.04 0.04 0.04"
             mass="0.15"
             rgba="1.0 0.25 0.15 1"
-            friction="1.2 0.05 0.05"/>
+            contype="1" conaffinity="1" friction="1.8 0.08 0.08"/>
     </body>
 
-    <body name="teleop_cylinder" pos="0.45 0.18 0.795">
+    <body name="teleop_cylinder" pos="0.30 0.12 0.795">
       <freejoint name="teleop_cylinder_freejoint"/>
       <geom name="teleop_cylinder_geom"
             type="cylinder"
             size="0.035 0.08"
             mass="0.12"
             rgba="0.15 0.65 1.0 1"
-            friction="1.2 0.05 0.05"/>
+            contype="1" conaffinity="1" friction="1.8 0.08 0.08"/>
     </body>
 
-    <body name="teleop_handle" pos="0.50 -0.18 0.755">
+    <body name="teleop_handle" pos="0.32 -0.12 0.755">
       <freejoint name="teleop_handle_freejoint"/>
       <geom name="teleop_handle_bar_geom"
             type="capsule"
@@ -487,21 +491,21 @@
             size="0.025"
             mass="0.20"
             rgba="0.95 0.85 0.20 1"
-            friction="1.4 0.05 0.05"/>
+            contype="1" conaffinity="1" friction="1.8 0.08 0.08"/>
       <geom name="teleop_handle_left_marker"
             type="sphere"
             pos="-0.12 0 0"
             size="0.035"
             mass="0.02"
             rgba="0.1 1.0 0.1 1"
-            friction="1.4 0.05 0.05"/>
+            contype="1" conaffinity="1" friction="1.8 0.08 0.08"/>
       <geom name="teleop_handle_right_marker"
             type="sphere"
             pos="0.12 0 0"
             size="0.035"
             mass="0.02"
             rgba="0.1 0.1 1.0 1"
-            friction="1.4 0.05 0.05"/>
+            contype="1" conaffinity="1" friction="1.8 0.08 0.08"/>
     </body>
 
   </worldbody>

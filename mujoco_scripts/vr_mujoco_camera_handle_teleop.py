@@ -18,6 +18,23 @@ from common.teleop_logger import TeleopLogger, flatten_vec
 XML_PATH = "mujoco_xml/g1_29dof_vrtest.xml"
 UDP_PORT = 5005
 
+# Camera-handle teleop mode.
+# The VR controllers drive a virtual handle centre, not direct arm mirroring.
+HANDLE_NEUTRAL_CENTRE = np.array([0.34, 0.00, 0.96], dtype=float)
+
+# Natural robot hand spacing around the virtual camera/tripod handle.
+HANDLE_BASE_HALF_WIDTH = 0.115
+HANDLE_MIN_HALF_WIDTH = 0.075
+HANDLE_MAX_HALF_WIDTH = 0.170
+
+# Scale operator movement into the robot's reachable workspace.
+HANDLE_TRANSLATION_SCALE = np.array([0.75, 0.75, 0.65], dtype=float)
+HANDLE_SPACING_SCALE = 0.35
+
+# Reachable workspace for the virtual handle centre.
+HANDLE_MIN = np.array([0.12, -0.22, 0.72], dtype=float)
+HANDLE_MAX = np.array([0.62, 0.22, 1.28], dtype=float)
+
 
 RIGHT_ARM_JOINTS = [
     "right_shoulder_pitch_joint",
@@ -390,6 +407,48 @@ def add_object_state(row, model, data, object_body_ids):
         row[f"object_{name}_angvel_z"] = float(angular_vel[2])
 
 
+def compute_camera_handle_targets(
+    left_raw,
+    right_raw,
+    neutral_left,
+    neutral_right,
+):
+    """
+    Convert VR controller movement into a stable camera-handle pose.
+
+    The midpoint of both controllers controls the handle centre.
+    The distance between the controllers only adjusts robot hand spacing slightly.
+    This avoids requiring the operator to cross their arms to match the G1 geometry.
+    """
+    left_raw = np.array(left_raw, dtype=float)
+    right_raw = np.array(right_raw, dtype=float)
+    neutral_left = np.array(neutral_left, dtype=float)
+    neutral_right = np.array(neutral_right, dtype=float)
+
+    current_mid = 0.5 * (left_raw + right_raw)
+    neutral_mid = 0.5 * (neutral_left + neutral_right)
+
+    mid_delta = current_mid - neutral_mid
+
+    handle_centre = HANDLE_NEUTRAL_CENTRE + HANDLE_TRANSLATION_SCALE * mid_delta
+    handle_centre = np.clip(handle_centre, HANDLE_MIN, HANDLE_MAX)
+
+    current_width = abs(left_raw[1] - right_raw[1])
+    neutral_width = max(abs(neutral_left[1] - neutral_right[1]), 0.001)
+
+    width_delta = current_width - neutral_width
+    half_width = HANDLE_BASE_HALF_WIDTH + HANDLE_SPACING_SCALE * width_delta
+    half_width = float(np.clip(half_width, HANDLE_MIN_HALF_WIDTH, HANDLE_MAX_HALF_WIDTH))
+
+    left_target = handle_centre + np.array([0.0, half_width, 0.0], dtype=float)
+    right_target = handle_centre + np.array([0.0, -half_width, 0.0], dtype=float)
+
+    left_target = clamp_target(left_target, "left")
+    right_target = clamp_target(right_target, "right")
+
+    return handle_centre, half_width, left_target, right_target
+
+
 def make_logger():
     joint_fields = []
 
@@ -419,14 +478,18 @@ def make_logger():
         "right_elbow_target_x", "right_elbow_target_y", "right_elbow_target_z",
         "left_error",
         "right_error",
+        "handle_centre_x",
+        "handle_centre_y",
+        "handle_centre_z",
+        "handle_half_width",
     ]
 
     fieldnames += joint_fields
     add_object_fields(fieldnames, TELEOP_OBJECTS)
 
     metadata = {
-        "script": "vr_mujoco_both_arms_ik.py",
-        "pipeline": "Quest controllers -> Windows UDP sender -> MuJoCo G1 elbow-guided IK",
+        "script": "vr_mujoco_camera_handle_teleop.py",
+        "pipeline": "Quest controllers -> virtual camera handle target -> MuJoCo G1 elbow-guided IK",
         "xml_path": XML_PATH,
         "udp_port": UDP_PORT,
         "left_arm_joints": LEFT_ARM_JOINTS,
@@ -441,6 +504,15 @@ def make_logger():
         "left_target_min": LEFT_TARGET_MIN.tolist(),
         "left_target_max": LEFT_TARGET_MAX.tolist(),
         "teleop_objects": TELEOP_OBJECTS,
+        "teleop_mode": "camera_handle",
+        "handle_neutral_centre": HANDLE_NEUTRAL_CENTRE.tolist(),
+        "handle_base_half_width": HANDLE_BASE_HALF_WIDTH,
+        "handle_min_half_width": HANDLE_MIN_HALF_WIDTH,
+        "handle_max_half_width": HANDLE_MAX_HALF_WIDTH,
+        "handle_translation_scale": HANDLE_TRANSLATION_SCALE.tolist(),
+        "handle_spacing_scale": HANDLE_SPACING_SCALE,
+        "handle_min": HANDLE_MIN.tolist(),
+        "handle_max": HANDLE_MAX.tolist(),
     }
 
     return TeleopLogger(
@@ -508,21 +580,25 @@ sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 sock.bind(("0.0.0.0", UDP_PORT))
 sock.setblocking(False)
 
-left_pos_raw = np.array([0.15, 0.28, 0.88], dtype=float)
-right_pos_raw = np.array([0.15, -0.28, 0.88], dtype=float)
+left_pos_raw = HANDLE_NEUTRAL_CENTRE + np.array([0.0, HANDLE_BASE_HALF_WIDTH, 0.0], dtype=float)
+right_pos_raw = HANDLE_NEUTRAL_CENTRE + np.array([0.0, -HANDLE_BASE_HALF_WIDTH, 0.0], dtype=float)
+
+neutral_left = left_pos_raw.copy()
+neutral_right = right_pos_raw.copy()
+
+handle_centre = HANDLE_NEUTRAL_CENTRE.copy()
+handle_half_width = HANDLE_BASE_HALF_WIDTH
 
 left_pos_smooth = left_pos_raw.copy()
 right_pos_smooth = right_pos_raw.copy()
-
-left_pos_commanded = left_pos_raw.copy()
-right_pos_commanded = right_pos_raw.copy()
 
 head_pos = np.array([0.0, 0.0, 1.6], dtype=float)
 
 print(f"\nLoaded: {XML_PATH}")
 print(f"Listening on UDP port {UDP_PORT}")
-print("Both-arm elbow-guided IK enabled.")
-print("Left controller drives left wrist; right controller drives right wrist.")
+print("Camera-handle teleop mode enabled.")
+print("VR controller midpoint drives a virtual camera/tripod handle.")
+print("Robot wrists are generated around the handle for a natural camera-holding pose.")
 print("Press Ctrl+C to stop.")
 
 last_print = 0.0
@@ -550,6 +626,11 @@ with mujoco.viewer.launch_passive(model, data) as viewer:
             if "right" in msg:
                 right_pos_raw = np.array(msg["right"], dtype=float)
 
+            if packet_count == 1:
+                neutral_left = left_pos_raw.copy()
+                neutral_right = right_pos_raw.copy()
+                print("Captured camera-handle neutral controller pose.")
+
             if "head" in msg:
                 head_pos = np.array(msg["head"], dtype=float)
 
@@ -557,20 +638,24 @@ with mujoco.viewer.launch_passive(model, data) as viewer:
             left_trigger = float(msg.get("left_trigger", 0.0))
             right_trigger = float(msg.get("right_trigger", 0.0))
 
-        # Clamp and smooth targets.
-        # Stable sim mode: always follow controller packets.
-        # Deadman is logged only; it does not gate the MuJoCo IK target.
-        left_clamped = clamp_target(left_pos_raw, "left")
-        right_clamped = clamp_target(right_pos_raw, "right")
+        # Camera-handle mapping.
+        # Controller midpoint controls handle centre.
+        # Controller separation slightly adjusts robot hand spacing.
+        handle_centre, handle_half_width, left_target, right_target = compute_camera_handle_targets(
+            left_raw=left_pos_raw,
+            right_raw=right_pos_raw,
+            neutral_left=neutral_left,
+            neutral_right=neutral_right,
+        )
 
         left_pos_smooth = (
             (1.0 - TARGET_SMOOTHING) * left_pos_smooth
-            + TARGET_SMOOTHING * left_clamped
+            + TARGET_SMOOTHING * left_target
         )
 
         right_pos_smooth = (
             (1.0 - TARGET_SMOOTHING) * right_pos_smooth
-            + TARGET_SMOOTHING * right_clamped
+            + TARGET_SMOOTHING * right_target
         )
 
         # Update visible mocap spheres.
@@ -621,6 +706,10 @@ with mujoco.viewer.launch_passive(model, data) as viewer:
             "deadman": int(deadman),
             "left_error": left_err,
             "right_error": right_err,
+            "handle_centre_x": float(handle_centre[0]),
+            "handle_centre_y": float(handle_centre[1]),
+            "handle_centre_z": float(handle_centre[2]),
+            "handle_half_width": float(handle_half_width),
         }
 
         row.update(flatten_vec("left", left_pos_smooth))
@@ -655,6 +744,8 @@ with mujoco.viewer.launch_passive(model, data) as viewer:
                 f"Packets: {packet_count} | "
                 f"L_err={left_err:.3f} | "
                 f"R_err={right_err:.3f} | "
+                f"Handle={np.round(handle_centre, 3)} | "
+                f"Width={handle_half_width:.3f} | "
                 f"L_target={np.round(left_pos_smooth, 3)} | "
                 f"R_target={np.round(right_pos_smooth, 3)} | "
                 f"deadman={deadman} | "

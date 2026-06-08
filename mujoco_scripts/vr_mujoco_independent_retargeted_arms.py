@@ -18,6 +18,33 @@ from common.teleop_logger import TeleopLogger, flatten_vec
 XML_PATH = "mujoco_xml/g1_29dof_vrtest.xml"
 UDP_PORT = 5005
 
+# ---------------------------------------------------------------------
+# Independent calibrated retargeting.
+#
+# Each controller controls only its matching robot wrist.
+# The first valid controller pose becomes the human neutral pose.
+# The robot neutral pose is a close, natural camera-holding pose.
+# ---------------------------------------------------------------------
+
+LEFT_ROBOT_NEUTRAL = np.array([0.34, 0.105, 0.98], dtype=float)
+RIGHT_ROBOT_NEUTRAL = np.array([0.34, -0.105, 0.98], dtype=float)
+
+# Controller delta -> robot wrist delta.
+# Increase these for more range; reduce if it feels too sensitive.
+RETARGET_SCALE = np.array([0.85, 0.85, 0.75], dtype=float)
+
+# Per-arm workspace limits.
+# These keep each wrist on its own side but still allow hands to come close.
+LEFT_TARGET_MIN = np.array([0.10, 0.035, 0.72], dtype=float)
+LEFT_TARGET_MAX = np.array([0.66, 0.34, 1.28], dtype=float)
+
+RIGHT_TARGET_MIN = np.array([0.10, -0.34, 0.72], dtype=float)
+RIGHT_TARGET_MAX = np.array([0.66, -0.035, 1.28], dtype=float)
+
+# Optional vertical bias if the robot sits too high/low.
+LEFT_TARGET_BIAS = np.array([0.0, 0.0, 0.0], dtype=float)
+RIGHT_TARGET_BIAS = np.array([0.0, 0.0, 0.0], dtype=float)
+
 
 RIGHT_ARM_JOINTS = [
     "right_shoulder_pitch_joint",
@@ -390,6 +417,43 @@ def add_object_state(row, model, data, object_body_ids):
         row[f"object_{name}_angvel_z"] = float(angular_vel[2])
 
 
+def compute_independent_retargeted_targets(
+    left_raw,
+    right_raw,
+    neutral_left,
+    neutral_right,
+):
+    """
+    Retarget VR controller movement to G1 wrist targets.
+
+    Important:
+    - left controller affects only left wrist
+    - right controller affects only right wrist
+    - no midpoint
+    - no shared camera-handle target
+    - no controller can move both arms
+    """
+    left_raw = np.array(left_raw, dtype=float)
+    right_raw = np.array(right_raw, dtype=float)
+
+    neutral_left = np.array(neutral_left, dtype=float)
+    neutral_right = np.array(neutral_right, dtype=float)
+
+    left_delta = left_raw - neutral_left
+    right_delta = right_raw - neutral_right
+
+    left_target = LEFT_ROBOT_NEUTRAL + LEFT_TARGET_BIAS + RETARGET_SCALE * left_delta
+    right_target = RIGHT_ROBOT_NEUTRAL + RIGHT_TARGET_BIAS + RETARGET_SCALE * right_delta
+
+    left_target = np.clip(left_target, LEFT_TARGET_MIN, LEFT_TARGET_MAX)
+    right_target = np.clip(right_target, RIGHT_TARGET_MIN, RIGHT_TARGET_MAX)
+
+    left_target = clamp_target(left_target, "left")
+    right_target = clamp_target(right_target, "right")
+
+    return left_target, right_target
+
+
 def make_logger():
     joint_fields = []
 
@@ -425,8 +489,8 @@ def make_logger():
     add_object_fields(fieldnames, TELEOP_OBJECTS)
 
     metadata = {
-        "script": "vr_mujoco_both_arms_ik.py",
-        "pipeline": "Quest controllers -> Windows UDP sender -> MuJoCo G1 elbow-guided IK",
+        "script": "vr_mujoco_independent_retargeted_arms.py",
+        "pipeline": "Quest controllers -> calibrated independent arm retargeting -> MuJoCo G1 elbow-guided IK",
         "xml_path": XML_PATH,
         "udp_port": UDP_PORT,
         "left_arm_joints": LEFT_ARM_JOINTS,
@@ -521,12 +585,20 @@ head_pos = np.array([0.0, 0.0, 1.6], dtype=float)
 
 print(f"\nLoaded: {XML_PATH}")
 print(f"Listening on UDP port {UDP_PORT}")
-print("Both-arm elbow-guided IK enabled.")
-print("Left controller drives left wrist; right controller drives right wrist.")
+print("Independent calibrated arm retargeting enabled.")
+print("Left controller drives left wrist only.")
+print("Right controller drives right wrist only.")
+print("Hold controllers naturally in camera pose before starting sender.")
 print("Press Ctrl+C to stop.")
 
 last_print = 0.0
 packet_count = 0
+
+# Neutral controller pose used for calibrated independent retargeting.
+# This prevents NameError before the first UDP packet arrives.
+neutral_left = left_pos_raw.copy()
+neutral_right = right_pos_raw.copy()
+neutral_captured = False
 deadman = False
 
 logger = make_logger()
@@ -553,24 +625,36 @@ with mujoco.viewer.launch_passive(model, data) as viewer:
             if "head" in msg:
                 head_pos = np.array(msg["head"], dtype=float)
 
+            if not neutral_captured and "left" in msg and "right" in msg:
+                neutral_left = left_pos_raw.copy()
+                neutral_right = right_pos_raw.copy()
+                neutral_captured = True
+                print("Captured neutral controller pose for independent retargeting.")
+                print("Left controller neutral :", np.round(neutral_left, 3))
+                print("Right controller neutral:", np.round(neutral_right, 3))
+
             deadman = bool(msg.get("deadman", False))
             left_trigger = float(msg.get("left_trigger", 0.0))
             right_trigger = float(msg.get("right_trigger", 0.0))
 
-        # Clamp and smooth targets.
-        # Stable sim mode: always follow controller packets.
-        # Deadman is logged only; it does not gate the MuJoCo IK target.
-        left_clamped = clamp_target(left_pos_raw, "left")
-        right_clamped = clamp_target(right_pos_raw, "right")
+        # Independent calibrated retargeting.
+        # Left controller controls left arm only.
+        # Right controller controls right arm only.
+        left_target, right_target = compute_independent_retargeted_targets(
+            left_raw=left_pos_raw,
+            right_raw=right_pos_raw,
+            neutral_left=neutral_left,
+            neutral_right=neutral_right,
+        )
 
         left_pos_smooth = (
             (1.0 - TARGET_SMOOTHING) * left_pos_smooth
-            + TARGET_SMOOTHING * left_clamped
+            + TARGET_SMOOTHING * left_target
         )
 
         right_pos_smooth = (
             (1.0 - TARGET_SMOOTHING) * right_pos_smooth
-            + TARGET_SMOOTHING * right_clamped
+            + TARGET_SMOOTHING * right_target
         )
 
         # Update visible mocap spheres.
@@ -657,6 +741,7 @@ with mujoco.viewer.launch_passive(model, data) as viewer:
                 f"R_err={right_err:.3f} | "
                 f"L_target={np.round(left_pos_smooth, 3)} | "
                 f"R_target={np.round(right_pos_smooth, 3)} | "
+                f"MODE=INDEPENDENT_RETARGETED | "
                 f"deadman={deadman} | "
                 f"L_trig={locals().get('left_trigger', 0.0):.2f} | "
                 f"R_trig={locals().get('right_trigger', 0.0):.2f} | "
